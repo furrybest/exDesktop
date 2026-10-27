@@ -39,7 +39,7 @@ jobs:
             mac-libs-
 
       - name: Build ThirdParty libraries
-        run: ./tdesktop/Telegram/build/prepare/mac.sh silent arm64-only
+        run: ./tdesktop/Telegram/build/prepare/mac.sh silent
 
       - name: Save ThirdParty libraries
         if: steps.libs.outputs.cache-hit != 'true'
