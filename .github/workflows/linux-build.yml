@@ -83,8 +83,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache Docker layers
-        uses: actions/cache@v4
+      - name: Restore Docker layers
+        id: buildx-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             /tmp/.buildx-cache
@@ -122,6 +123,16 @@ jobs:
             rm -rf /tmp/.buildx-cache
             mv /tmp/.buildx-cache-new /tmp/.buildx-cache
           fi
+
+      # Save right away: the image takes ~4 h, and a post-step save is lost
+      # whenever the app build after it fails or the runner goes away.
+      - name: Save Docker layers
+        if: steps.buildx-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /tmp/.buildx-cache
+          key: ${{ steps.buildx-cache.outputs.cache-primary-key }}
 
       - name: Build Telegram binary
         run: |
