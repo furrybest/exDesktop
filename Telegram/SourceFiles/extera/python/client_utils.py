@@ -38,17 +38,23 @@ def _reply_id(value):
     return int(getattr(value, "id", 0) or 0)
 
 
-def send_message(params: Any, parse_mode: Optional[str] = None,
-                 on_sent: Optional[Callable] = None):
-    if isinstance(params, dict):
+def send_message(params: Any, text: Optional[str] = None,
+                 parse_mode: Optional[str] = None,
+                 reply_to: Optional[Any] = None):
+    if isinstance(params, (int, str)) and text is not None:
+        peer = params
+        msg_text = str(text or "")
+        reply = reply_to
+    elif isinstance(params, dict):
         peer = params.get("peer")
-        text = params.get("message") or params.get("caption") or ""
+        msg_text = params.get("message") or params.get("caption") or ""
         reply = params.get("replyToMsg")
     else:
         peer = getattr(params, "peer", None)
-        text = getattr(params, "message", "") or ""
+        msg_text = getattr(params, "message", "") or getattr(params, "caption", "") or ""
         reply = getattr(params, "replyToMsg", None)
-    _compat.send(peer, text, parse_mode, _reply_id(reply))
+    entities = getattr(params, "entities", None) if not isinstance(params, (int, str, dict)) else None
+    _compat.send(peer, msg_text, parse_mode, _reply_id(reply), entities=entities)
 
 
 def send_text(peer_id: int, text: str, parse_mode: Optional[str] = None,
@@ -91,6 +97,10 @@ def get_account_instance():
     return _compat.Stub("AccountInstance")
 
 
+def get_selected_account() -> int:
+    return 0
+
+
 def get_messages_controller():
     return _compat.Stub("MessagesController")
 
@@ -119,8 +129,12 @@ def get_connections_manager():
     return _compat.Stub("ConnectionsManager")
 
 
-def get_send_messages_helper():
-    return _compat.Stub("SendMessagesHelper")
+class _SendMessagesHelper:
+    def sendMessage(self, params, *args, **kwargs):
+        send_message(params)
+
+def get_send_messages_helper(*args, **kwargs):
+    return _SendMessagesHelper()
 
 
 def get_file_loader():

@@ -11,7 +11,20 @@ import _extera
 
 # Stub
 
-class Stub:
+class StubMeta(type):
+    def __getattr__(cls, item):
+        if item.startswith("__") and item.endswith("__"):
+            raise AttributeError(item)
+        return Stub(cls.__name__ + "." + item)
+
+    def __instancecheck__(cls, instance):
+        return True
+
+    def __subclasscheck__(cls, subclass):
+        return True
+
+
+class Stub(metaclass=StubMeta):
     def __init__(self, name="stub"):
         object.__setattr__(self, "_name", name)
 
@@ -57,6 +70,36 @@ class Stub:
 
     def __repr__(self):
         return f"<stub {self._name}>"
+
+
+class ArrayList(list):
+    def add(self, *args):
+        if len(args) == 1:
+            self.append(args[0])
+        elif len(args) == 2:
+            self.insert(args[0], args[1])
+        return True
+
+    def size(self):
+        return len(self)
+
+    def get(self, index):
+        try:
+            return self[index]
+        except IndexError:
+            return None
+
+    def remove(self, val):
+        if isinstance(val, int) and val < len(self):
+            return self.pop(val)
+        try:
+            super().remove(val)
+            return True
+        except ValueError:
+            return False
+
+    def clear(self):
+        super().clear()
 
     def __eq__(self, other):
         return isinstance(other, Stub)
@@ -202,6 +245,24 @@ SHIMS = {
         "jfloat": float,
         "jdouble": float,
     },
+    "java.util": {
+        "ArrayList": ArrayList,
+        "List": list,
+        "Map": dict,
+        "HashMap": dict,
+        "Set": set,
+        "HashSet": set,
+    },
+    "java.lang": {
+        "Boolean": bool,
+        "Integer": int,
+        "Long": int,
+        "String": str,
+        "Float": float,
+        "Double": float,
+        "Exception": Exception,
+        "Object": object,
+    },
 }
 
 ROOTS = ("java", "android", "androidx", "org", "com", "kotlin", "dalvik",
@@ -212,9 +273,11 @@ class _StubModule(type(sys)):
     def __getattr__(self, item):
         if item.startswith("__") and item.endswith("__"):
             raise AttributeError(item)
-        value = Stub(self.__name__ + "." + item)
-        setattr(self, item, value)
-        return value
+        class DynamicStub(Stub):
+            pass
+        DynamicStub.__name__ = item
+        setattr(self, item, DynamicStub)
+        return DynamicStub
 
 
 class _Finder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -380,17 +443,44 @@ def format_text(text, parse_mode):
 
 
 def to_dialog_id(peer):
-    if isinstance(peer, Stub):
-        return 0
+    if peer is None or peer == 0 or isinstance(peer, Stub):
+        return int(_extera.current_peer() or 0)
     try:
-        return int(peer)
+        dialog_id = int(peer)
+        return dialog_id if dialog_id != 0 else int(_extera.current_peer() or 0)
     except Exception:
         value = getattr(peer, "user_id", None) or getattr(peer, "channel_id", None) \
-            or getattr(peer, "chat_id", None)
-        return int(value or 0)
+            or getattr(peer, "chat_id", None) or getattr(peer, "dialog_id", None) \
+            or getattr(peer, "id", None)
+        return int(value or _extera.current_peer() or 0)
 
 
-def send(peer, text, parse_mode=None, reply_to=0):
-    plain, entities = format_text(str(text or ""), parse_mode)
+def send(peer, text, parse_mode=None, reply_to=0, entities=None):
+    plain, parsed_entities = format_text(str(text or ""), parse_mode)
+    if entities:
+        for e in entities:
+            offset = getattr(e, "offset", 0)
+            length = getattr(e, "length", 0)
+            url = getattr(e, "url", "")
+            cls_name = type(e).__name__
+            kind = "custom"
+            if "Blockquote" in cls_name:
+                kind = "blockquote"
+            elif "TextUrl" in cls_name or "Url" in cls_name:
+                kind = "url"
+            elif "Bold" in cls_name:
+                kind = "bold"
+            elif "Italic" in cls_name:
+                kind = "italic"
+            elif "Code" in cls_name:
+                kind = "code"
+            elif "Pre" in cls_name:
+                kind = "pre"
+            elif "Spoiler" in cls_name:
+                kind = "spoiler"
+            elif "Strike" in cls_name:
+                kind = "strike"
+            if length > 0:
+                parsed_entities.append([kind, offset, length, str(url or "")])
     _extera.send_message(
-        to_dialog_id(peer), plain, json.dumps(entities), int(reply_to or 0))
+        to_dialog_id(peer), plain, json.dumps(parsed_entities), int(reply_to or 0))

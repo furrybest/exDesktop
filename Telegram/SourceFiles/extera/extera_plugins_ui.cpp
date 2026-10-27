@@ -566,11 +566,14 @@ void FillPluginsList(
 		std::stable_sort(list.begin(), list.end(), [&](
 				const QVariant &a,
 				const QVariant &b) {
-			const auto left = pinned.contains(
-				a.toMap().value(u"id"_q).toString());
-			const auto right = pinned.contains(
-				b.toMap().value(u"id"_q).toString());
-			return left && !right;
+			const auto idA = a.toMap().value(u"id"_q).toString();
+			const auto idB = b.toMap().value(u"id"_q).toString();
+			const auto indexA = pinned.indexOf(idA);
+			const auto indexB = pinned.indexOf(idB);
+			if (indexA >= 0 && indexB >= 0) {
+				return indexA < indexB;
+			}
+			return (indexA >= 0) && (indexB < 0);
 		});
 		if (list.isEmpty()) {
 			container->add(
@@ -724,6 +727,7 @@ void FillPluginsList(
 			}, actions->lifetime());
 			Ui::AddSkip(card, st::exteraPluginCardSkip);
 		}
+		container->showChildren();
 		container->resizeToWidth(container->width());
 	};
 	fill();

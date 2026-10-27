@@ -2775,18 +2775,13 @@ if (WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${libs_loc}/python311/embed $<TARGET_FILE_DIR:Telegram>/python
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/SourceFiles/extera/python $<TARGET_FILE_DIR:Telegram>/python/extera
     )
-elseif (APPLE)
-    find_package(Python3 COMPONENTS Development)
-    if (Python3_FOUND)
-        target_include_directories(Telegram PRIVATE ${Python3_INCLUDE_DIRS})
-        target_link_libraries(Telegram PRIVATE ${Python3_LIBRARIES})
-        add_custom_command(TARGET Telegram POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/SourceFiles/extera/python $<TARGET_FILE_DIR:Telegram>/python/extera
-        )
-    else()
-        message(WARNING "Python3 development libraries not found: plugin support (extera_plugins) will be disabled on this build")
-        set_source_files_properties(SourceFiles/extera/extera_plugins.cpp PROPERTIES HEADER_FILE_ONLY TRUE)
-    endif()
+else()
+    find_package(Python3 COMPONENTS Development REQUIRED)
+    target_include_directories(Telegram PRIVATE ${Python3_INCLUDE_DIRS})
+    target_link_libraries(Telegram PRIVATE ${Python3_LIBRARIES})
+    add_custom_command(TARGET Telegram POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/SourceFiles/extera/python $<TARGET_FILE_DIR:Telegram>/python/extera
+    )
 endif()
 
 if (MSVC)

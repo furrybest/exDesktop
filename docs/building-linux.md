@@ -1,60 +1,124 @@
-## Build instructions for Linux using Docker
+# Инструкция по сборке exDesktop под Linux (x86_64)
 
-### Prepare folder
+exDesktop — это нативный клиент Telegram с расширенными функциями (меню настроек, лента каналов, режим стримера, интеграция с Gemini и движок Python-плагинов).
 
-Choose a folder for the future build, for example **/home/user/TBuild**. It will be named ***BuildPath*** in the rest of this document. All commands will be launched from Terminal.
+---
 
-### Obtain your API credentials
+## 1. Предварительные требования и зависимости
 
-You will require **api_id** and **api_hash** to access the Telegram API servers. To learn how to obtain them [click here][api_credentials].
+### Системные пакеты (для нативной сборки на хосте)
+- **Компилятор C++:** `GCC >= 12` или `Clang >= 16` (требуется поддержка стандарта C++20)
+- **Сборщик:** `CMake >= 3.25` и `Ninja`
+- **Python:** `Python >= 3.10` с заголовочными файлами (`python3-dev` / `python3-devel`)
+- **Qt6:** `qtbase`, `qtsvg`, `qtimageformats`, `qtwayland` (с поддержкой Wayland и X11)
+- **Медиа и кодеки:** `ffmpeg`, `libvpx`, `openh264`, `opus`, `rnnoise`, `openal`
+- **Системные библиотеки:** `openssl`, `libfido2`, `xxhash`, `lz4`, `cmark-gfm`, `ada`, `minizip`, `kcoreaddons`
 
-### Clone source code and prepare libraries
+Для Debian/Ubuntu:
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake ninja-build python3-dev \
+    qt6-base-dev qt6-base-private-dev qt6-wayland-dev libqt6svg6-dev \
+    libavcodec-dev libavformat-dev libswscale-dev libopus-dev libvpx-dev \
+    libssl-dev libfido2-dev libxxhash-dev liblz4-dev libopenal-dev
+```
 
-Install [poetry](https://python-poetry.org), go to ***BuildPath*** and run
+Для Fedora/RHEL:
+```bash
+sudo dnf install -y gcc-c++ cmake ninja-build python3-devel \
+    qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtwayland-devel qt6-qtsvg-devel \
+    ffmpeg-free-devel libvpx-devel opus-devel openssl-devel libfido2-devel
+```
 
-    git clone --recursive https://github.com/telegramdesktop/tdesktop.git
-    ./tdesktop/Telegram/build/prepare/linux.sh
+Для Arch Linux:
+```bash
+sudo pacman -S --needed base-devel cmake ninja python qt6-base qt6-wayland qt6-svg \
+    ffmpeg libvpx opus openssl libfido2 xxhash lz4 openal
+```
 
-### Building the project
+---
 
-Go to ***BuildPath*/tdesktop** and run (using [your **api_id** and **api_hash**](#obtain-your-api-credentials))
+## 2. API Credentials Telegram
 
-    docker run --rm -it \
-        -u $(id -u) \
-        -v "$PWD:/usr/src/tdesktop" \
-        tdesktop:centos_env \
-        /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
-        -D TDESKTOP_API_ID=YOUR_API_ID \
-        -D TDESKTOP_API_HASH=YOUR_API_HASH
+В сборку встроены рабочие ключи:
+- **TDESKTOP_API_ID:** `27795979`
+- **TDESKTOP_API_HASH:** `0b9b427e162605ce85210ab918a9c2d8`
 
-Or, to create a debug build, run (also using [your **api_id** and **api_hash**](#obtain-your-api-credentials))
+При необходимости передать собственные ключи используйте переменные окружения:
+```bash
+export TDESKTOP_API_ID="27795979"
+export TDESKTOP_API_HASH="0b9b427e162605ce85210ab918a9c2d8"
+```
 
-    docker run --rm -it \
-        -u $(id -u) \
-        -v "$PWD:/usr/src/tdesktop" \
-        -e CONFIG=Debug \
-        tdesktop:centos_env \
-        /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
-        -D TDESKTOP_API_ID=YOUR_API_ID \
-        -D TDESKTOP_API_HASH=YOUR_API_HASH
+---
 
-The built files will be in the `out` directory.
+## 3. Проверка движка плагинов
 
-### Visual Studio Code integration
+Движок `extera_plugins` на Linux использует нативный Python C API (`Python.h`, `PyConfig_InitPythonConfig`), что исключает зависимость от Windows DLL (`python311.dll` / `LoadLibraryW`).
 
-Ensure you've followed the instruction up to the [**Clone source code and prepare libraries**](#clone-source-code-and-prepare-libraries) step at least.
+Для автономной верификации работы движка запустите встроенный тест:
+```bash
+./build_linux.sh test
+```
 
-Open the repository in Visual Studio Code, install the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension and add the following to `.vscode/settings.json` (using [your **api_id** and **api_hash**](#obtain-your-api-credentials)):
+Тест проверяет:
+1. Регистрацию встроенного C++ модуля `_extera`.
+2. Корректную инициализацию Python рантайма в среде Linux.
+3. Поиск и импорт хост-модуля `extera_host.py`.
+4. Загрузку плагинов формата `.plugin`.
+5. Работу перехватчиков сообщений (`send_hook`) и модификацию исходящего текста.
+6. Корректное завершение работы (`shutdown`).
 
-    {
-        "cmake.configureSettings": {
-            "TDESKTOP_API_ID": "YOUR_API_ID",
-            "TDESKTOP_API_HASH": "YOUR_API_HASH"
-        }
-    }
+---
 
-After that, choose **Reopen in Container** via the menu triggered by the green button in bottom left corner and you're done.
+## 4. Сборка клиента
 
-![Quick actions Status bar item](https://code.visualstudio.com/assets/docs/devcontainers/containers/remote-dev-status-bar.png)
+### Способ А: Сборка в официальном изолированном Docker-контейнере (Рекомендуется)
+Этот способ гарантирует сборку всех 36 сабмодулей (кастомный WebRTC, tgcalls, патченный Qt6) без засорения хост-системы:
 
-[api_credentials]: api_credentials.md
+```bash
+# Клонирование сабмодулей
+git submodule update --init --recursive
+
+# Запуск герметичной сборки
+./build_linux.sh docker
+```
+
+Бинарник будет создан в каталоге: `out/Release/root/Telegram`.
+
+### Способ Б: Нативная сборка на хосте
+Если в вашей системе уже установлены библиотеки `telegram-desktop` (например, Arch, Fedora, openSUSE или Gentoo):
+
+```bash
+# Инициализация необходимых сабмодулей (lib_ui, cmake_helpers)
+git submodule update --init Telegram/lib_ui cmake
+
+# Конфигурация и компиляция
+./build_linux.sh configure
+./build_linux.sh build
+```
+
+Готовый бинарник будет доступен по пути `out/bin/Telegram`.
+
+---
+
+## 5. Расположение плагинов и данных в Linux
+
+- **Код хоста и вспомогательные скрипты Python:**
+  - `<папка с бинарником>/python/extera/`
+  - или `~/.local/share/exDesktop/python/extera/`
+  - или `/usr/share/exDesktop/python/extera/`
+- **Пользовательские плагины:**
+  - `~/.local/share/exDesktop/tdata/plugins/` (файлы с расширением `.plugin`)
+- **Настройки плагинов:**
+  - `~/.local/share/exDesktop/tdata/settings/`
+
+---
+
+## 6. Наложение патча на чистый исходный код
+
+Полный патч адаптации сохранен в файле [patches/exdesktop_linux_port.patch](file:///home/rorka/Projects/exDesktop/patches/exdesktop_linux_port.patch).
+Для наложения на свежий репозиторий:
+```bash
+git apply patches/exdesktop_linux_port.patch
+```

@@ -13,6 +13,13 @@ class HookStrategy(Enum):
     MODIFY_FINAL = 3
 
 
+class AppEvent(Enum):
+    START = "start"
+    STOP = "stop"
+    RESUME = "resume"
+    PAUSE = "pause"
+
+
 class HookResult:
     def __init__(self, strategy: HookStrategy = HookStrategy.DEFAULT,
                  request: Any = None, response: Any = None,
@@ -71,6 +78,11 @@ class BasePlugin:
         self.id: str = ""
         self.name: str = ""
         self.error_message: Optional[str] = None
+        import logging
+        self.logger = logging.getLogger("extera." + (self.__class__.__name__))
+
+    def log(self, message: Any):
+        _host.log(f"[{self.id or self.name}] {message}")
 
     def on_plugin_load(self):
         pass
