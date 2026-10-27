@@ -4,7 +4,7 @@
 
 - OS / arch:
 - Built and run locally: yes / no
-- Not tested (be explicit): 
+- Not tested (be explicit):
 
 ## Notes
 
