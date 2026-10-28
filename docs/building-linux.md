@@ -40,14 +40,10 @@ sudo pacman -S --needed base-devel cmake ninja python qt6-base qt6-wayland qt6-s
 
 ## 2. API Credentials Telegram
 
-В сборку встроены рабочие ключи:
-- **TDESKTOP_API_ID:** `27795979`
-- **TDESKTOP_API_HASH:** `0b9b427e162605ce85210ab918a9c2d8`
-
-При необходимости передать собственные ключи используйте переменные окружения:
+Без своих ключей сборка использует тестовые ключи tdesktop (TEST ONLY). Для релизов получите свои на https://my.telegram.org и передайте их через переменные окружения:
 ```bash
-export TDESKTOP_API_ID="27795979"
-export TDESKTOP_API_HASH="0b9b427e162605ce85210ab918a9c2d8"
+export TDESKTOP_API_ID="..."
+export TDESKTOP_API_HASH="..."
 ```
 
 ---

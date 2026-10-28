@@ -9,9 +9,13 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Official / Custom Telegram API Credentials
-export TDESKTOP_API_ID="${TDESKTOP_API_ID:-27795979}"
-export TDESKTOP_API_HASH="${TDESKTOP_API_HASH:-0b9b427e162605ce85210ab918a9c2d8}"
+# Your own credentials from https://my.telegram.org. Without them the build
+# uses tdesktop's TEST ONLY credentials.
+if [ -n "${TDESKTOP_API_ID:-}" ]; then
+    API_ARGS=(-DTDESKTOP_API_ID="${TDESKTOP_API_ID}" -DTDESKTOP_API_HASH="${TDESKTOP_API_HASH}")
+else
+    API_ARGS=(-DTDESKTOP_API_TEST=ON)
+fi
 
 MODE="${1:---help}"
 
@@ -31,8 +35,8 @@ Commands:
   help                Show this message
 
 Environment Variables:
-  TDESKTOP_API_ID     Telegram API ID (default: 27795979)
-  TDESKTOP_API_HASH   Telegram API Hash (default: 0b9b427e162605ce85210ab918a9c2d8)
+  TDESKTOP_API_ID     Telegram API ID (default: test credentials)
+  TDESKTOP_API_HASH   Telegram API Hash
   BUILD_DIR           Build directory (default: out)
   CONFIG              Build configuration: Release or Debug (default: Release)
 EOF
@@ -60,8 +64,7 @@ run_configure() {
     echo "==> Configuring CMake in ${BUILD_DIR} (${CONFIG})..."
     cmake -B "${BUILD_DIR}" -G Ninja \
         -DCMAKE_BUILD_TYPE="${CONFIG}" \
-        -DTDESKTOP_API_ID="${TDESKTOP_API_ID}" \
-        -DTDESKTOP_API_HASH="${TDESKTOP_API_HASH}" \
+        "${API_ARGS[@]}" \
         -DDESKTOP_APP_DISABLE_X11_INTEGRATION=OFF \
         -DDESKTOP_APP_DISABLE_WAYLAND_INTEGRATION=OFF \
         "${@:2}"
@@ -107,7 +110,7 @@ run_docker() {
         cd "$SCRIPT_DIR"
     fi
 
-    echo "==> Running build in container with API ID: ${TDESKTOP_API_ID}..."
+    echo "==> Running build in container..."
     local DOCKER_TTY=""
     [ -t 0 ] && DOCKER_TTY="-it"
     ${DOCKER_CLI} run --rm ${DOCKER_TTY} \
@@ -116,8 +119,7 @@ run_docker() {
         -e CONFIG="${CONFIG}" \
         "${IMAGE_TAG}" \
         /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
-        -D TDESKTOP_API_ID="${TDESKTOP_API_ID}" \
-        -D TDESKTOP_API_HASH="${TDESKTOP_API_HASH}"
+        "${API_ARGS[@]}"
 
     echo "==> Success! Binary output: out/Release/root/Telegram"
 }

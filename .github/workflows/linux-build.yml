@@ -33,8 +33,6 @@ permissions:
   contents: write
 
 env:
-  TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID || '27795979' }}
-  TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH || '0b9b427e162605ce85210ab918a9c2d8' }}
   CONFIG: ${{ inputs.config || 'Release' }}
 
 jobs:
@@ -64,79 +62,133 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # Arch has current Qt 6, ffmpeg and the rest packaged, so only the libraries
+    # tdesktop pins itself are built here, once, and cached like on Windows/macOS.
+    # The binary links the system libraries, so it targets current distros.
+    container: archlinux:base-devel
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEPS: /opt/deps
+      CCACHE_DIR: /root/.ccache
+      CCACHE_MAXSIZE: 2G
     steps:
+      - name: Install system packages
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git cmake ninja ccache python gperf nasm yasm rustup zip github-cli \
+            qt6-base qt6-svg qt6-imageformats qt6-wayland qt6-5compat \
+            kcoreaddons extra-cmake-modules glibmm-2.68 gobject-introspection \
+            wayland-protocols plasma-wayland-protocols libxkbcommon \
+            libxcomposite libxdamage libxrandr libxtst libxfixes libxrender xcb-util-keysyms \
+            ffmpeg openal openh264 libvpx dav1d opus rnnoise hunspell xxhash lz4 minizip \
+            openssl zlib libjpeg-turbo pipewire libpulse alsa-lib \
+            boost range-v3 fmt protobuf abseil-cpp libdispatch jemalloc
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Free up disk space
-        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: false
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Restore Docker layers
-        id: buildx-cache
+      - name: Restore dependencies
+        id: deps
         uses: actions/cache/restore@v4
         with:
-          path: |
-            /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ hashFiles('Telegram/build/docker/centos_env/**') }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
+          path: /opt/deps
+          key: linux-deps-v1-ada3.2.9-td51743df-owt07fb35b-rust1.96.1
 
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ccache
-          key: ${{ runner.os }}-ccache-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-
-      - name: Generate Dockerfile
+      # Pinned to the same revisions as Telegram/build/docker/centos_env/Dockerfile.
+      - name: Build dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
         run: |
-          python3 -m pip install jinja2
-          cd Telegram/build/docker/centos_env
-          python3 gen_dockerfile.py > Dockerfile.rendered
+          set -e
+          mkdir -p /tmp/deps && cd /tmp/deps
+          fetch() { # repo commit dir
+            git init -q "$3" && git -C "$3" remote add origin "https://github.com/$1.git"
+            git -C "$3" fetch -q --depth=1 origin "$2" && git -C "$3" reset -q --hard FETCH_HEAD
+          }
 
-      - name: Build and Cache Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: Telegram/build/docker/centos_env
-          file: Telegram/build/docker/centos_env/Dockerfile.rendered
-          load: true
-          tags: tdesktop:centos_env
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          git clone -q -b v3.2.9 --depth=1 https://github.com/ada-url/ada.git
+          cmake -S ada -B ada/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS \
+            -DADA_TESTING=OFF -DADA_TOOLS=OFF -DADA_INCLUDE_URL_PATTERN=OFF
+          cmake --build ada/build && cmake --install ada/build
 
-      - name: Update Docker cache
-        run: |
-          if [ -d /tmp/.buildx-cache-new ]; then
-            rm -rf /tmp/.buildx-cache
-            mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-          fi
+          fetch tdlib/td 51743dfd01dff6179e2d8f7095729caa4e2222e9 td
+          cmake -S td -B td/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS -DTD_E2E_ONLY=ON
+          cmake --build td/build && cmake --install td/build
 
-      # Save right away: the image takes ~4 h, and a post-step save is lost
-      # whenever the app build after it fails or the runner goes away.
-      - name: Save Docker layers
-        if: steps.buildx-cache.outputs.cache-hit != 'true'
+          fetch desktop-app/tg_owt 07fb35bc33b3e79125a1beab7690e830f183f5d8 tg_owt
+          git -C tg_owt submodule update -q --init --recursive --depth=1
+          cmake -S tg_owt -B tg_owt/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS \
+            -DTG_OWT_DLOPEN_PIPEWIRE=ON
+          cmake --build tg_owt/build && cmake --install tg_owt/build
+
+          # One Rust archive for tlottie + wallet-engine, as prepare.py does.
+          rustup default 1.96.1
+          fetch desktop-app/patches a895fef40eaa7d66481cff542c623b039b7ce494 patches
+          fetch dkaraush/tlottie 92df98dc209bc39b1e567ec74a8c86a0af5239de tlottie
+          GIT_LFS_SKIP_SMUDGE=1 fetch i582/wallet-engine e59e0d89d7ee90c388bf36e3334c5b276f396697 wallet-engine
+          git -C wallet-engine apply ../patches/wallet-engine.patch
+          cargo new -q --lib --vcs none tdesktop_rust
+          cd tdesktop_rust
+          printf 'pub use ::tlottie;\npub use ::wallet_engine;\n' > src/lib.rs
+          cargo add -q --path ../tlottie --features c-api
+          cargo add -q --path ../wallet-engine
+          cargo rustc --lib --release --crate-type staticlib --crate-type cdylib \
+            --config "profile.release.opt-level=3" \
+            --config "profile.release.lto='thin'" \
+            --config "profile.release.codegen-units=1" \
+            --config "profile.release.panic='unwind'"
+          mkdir -p $DEPS/lib $DEPS/include/tlottie $DEPS/include/wallet_engine
+          objcopy --strip-debug target/release/libtdesktop_rust.a $DEPS/lib/libtdesktop_rust.a
+          cp ../tlottie/include/tlottie.h $DEPS/include/tlottie/
+          cargo run --manifest-path ../wallet-engine/bindgen/cpp/bindgen/Cargo.toml --locked -- \
+            --library --out-dir $DEPS/include/wallet_engine target/release/libtdesktop_rust.so
+
+      - name: Save dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: |
-            /tmp/.buildx-cache
-          key: ${{ steps.buildx-cache.outputs.cache-primary-key }}
+          path: /opt/deps
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: /root/.ccache
+          key: linux-ccache-${{ github.run_id }}
+          restore-keys: |
+            linux-ccache-
+
+      - name: Configure
+        env:
+          API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+        run: |
+          if [ -n "$API_ID" ]; then
+            creds=(-D TDESKTOP_API_ID="$API_ID" -D TDESKTOP_API_HASH="$API_HASH")
+          elif [ "$GITHUB_EVENT_NAME" = release ]; then
+            echo "TDESKTOP_API_ID secret is not set"; exit 1
+          else
+            echo "No API secrets, using TEST ONLY credentials"
+            creds=(-D TDESKTOP_API_TEST=ON)
+          fi
+          cmake -B out -G Ninja "${creds[@]}" \
+            -D CMAKE_BUILD_TYPE="$CONFIG" \
+            -D CMAKE_PREFIX_PATH="$DEPS" \
+            -D CMAKE_C_COMPILER_LAUNCHER=ccache \
+            -D CMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build Telegram binary
-        run: |
-          ./build_linux.sh docker
+        run: cmake --build out --target Telegram
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /root/.ccache
+          key: linux-ccache-${{ github.run_id }}
 
       - name: Package Linux release
         run: |
