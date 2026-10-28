@@ -81,11 +81,19 @@ jobs:
             -D CMAKE_C_COMPILER_LAUNCHER=ccache \
             -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -D CMAKE_OBJC_COMPILER_LAUNCHER=ccache \
-            -D CMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+            -D CMAKE_OBJCXX_COMPILER_LAUNCHER=ccache \
+            -D CMAKE_CXX_FLAGS="-Xclang -fno-pch-timestamp" \
+            -D CMAKE_OBJCXX_FLAGS="-Xclang -fno-pch-timestamp"
 
+      # Most sources use the precompiled header, which ccache refuses to cache
+      # unless the PCH has no timestamp and these sloppiness bits are set.
+      # Three jobs, not ninja's default five: the 3-core/7 GB runner swaps and
+      # single files took 10-20 min.
       - name: Build
         working-directory: tdesktop/out
-        run: cmake --build . --config Release --target Telegram --parallel
+        env:
+          CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+        run: cmake --build . --config Release --target Telegram --parallel 3
 
       - name: Package
         working-directory: tdesktop/out/Release
