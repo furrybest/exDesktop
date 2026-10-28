@@ -76,6 +76,8 @@ jobs:
         shell: cmd
         env:
           LIBS_CACHE_HIT: ${{ steps.libs.outputs.cache-hit }}
+          # fetch_archive.py queries the GitHub API, unauthenticated it hits the rate limit.
+          GH_TOKEN: ${{ github.token }}
         run: |
           call "%VCVARS64%" -vcvars_ver=14.44
           if /I "%LIBS_CACHE_HIT%"=="true" goto skipAtlValidation

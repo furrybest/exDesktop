@@ -39,6 +39,9 @@ jobs:
             mac-libs-
 
       - name: Build ThirdParty libraries
+        env:
+          # fetch_archive.py queries the GitHub API, unauthenticated it hits the rate limit.
+          GH_TOKEN: ${{ github.token }}
         run: ./tdesktop/Telegram/build/prepare/mac.sh silent
 
       - name: Save ThirdParty libraries
