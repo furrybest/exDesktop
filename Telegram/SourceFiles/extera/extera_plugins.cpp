@@ -34,6 +34,7 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QStandardPaths>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -78,11 +79,41 @@ private:
 };
 
 [[nodiscard]] QString RuntimePath() {
+#ifdef Q_OS_WIN
 	return cExeDir() + u"python/"_q;
+#elif defined(Q_OS_MAC)
+	return cExeDir() + u"python/"_q;
+#else
+	// Linux / generic Unix: check local candidates where extera_host.py might reside
+	const auto localToExe = cExeDir() + u"python/"_q;
+	if (QFile::exists(localToExe + u"extera/extera_host.py"_q)) {
+		return localToExe;
+	}
+	const auto appData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + u"/python/"_q;
+	if (QFile::exists(appData + u"extera/extera_host.py"_q)) {
+		return appData;
+	}
+	const auto localShare = QDir::homePath() + u"/.local/share/exDesktop/python/"_q;
+	if (QFile::exists(localShare + u"extera/extera_host.py"_q)) {
+		return localShare;
+	}
+	const auto systemShare = u"/usr/share/exDesktop/python/"_q;
+	if (QFile::exists(systemShare + u"extera/extera_host.py"_q)) {
+		return systemShare;
+	}
+	return QFile::exists(localToExe) ? localToExe : appData;
+#endif
 }
 
 [[nodiscard]] QString DataPath() {
+#ifdef Q_OS_WIN
 	return cWorkingDir() + u"tdata/plugins/"_q;
+#else
+	if (cWorkingDir().isEmpty()) {
+		return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + u"/plugins/"_q;
+	}
+	return cWorkingDir() + u"tdata/plugins/"_q;
+#endif
 }
 
 [[nodiscard]] QString StartMarkerPath() {
@@ -135,14 +166,20 @@ void ShowToast(const QString &text) {
 		int64 dialogId) {
 	const auto owner = &session->data();
 	if (dialogId > 0) {
-		return owner->peerLoaded(peerFromUser(UserId(dialogId)));
+		if (const auto user = owner->peerLoaded(peerFromUser(UserId(dialogId)))) {
+			return user;
+		}
+		return owner->peer(peerFromUser(UserId(dialogId)));
 	} else if (dialogId < 0) {
 		const auto bare = BareId(-dialogId);
 		if (const auto channel = owner->peerLoaded(
 				peerFromChannel(ChannelId(bare)))) {
 			return channel;
 		}
-		return owner->peerLoaded(peerFromChat(ChatId(bare)));
+		if (const auto chat = owner->peerLoaded(peerFromChat(ChatId(bare)))) {
+			return chat;
+		}
+		return owner->peer(peerFromChannel(ChannelId(bare)));
 	}
 	return nullptr;
 }
@@ -195,7 +232,9 @@ void SendFromPlugin(
 		return;
 	}
 	const auto session = &controller->session();
-	const auto peer = ResolveDialog(session, dialogId);
+	const auto peer = (dialogId != 0)
+		? ResolveDialog(session, dialogId)
+		: (controller->activeChatCurrent().peer());
 	if (!peer) {
 		ShowToast(tr::lng_extera_plugins_no_chat(tr::now));
 		return;
@@ -379,6 +418,11 @@ PyObject *NativeSettingsChanged(PyObject *self, PyObject *args) {
 }
 
 PyObject *NativeCurrentPeer(PyObject *self, PyObject *args) {
+	if (const auto controller = ActiveController()) {
+		if (const auto peer = controller->activeChatCurrent().peer()) {
+			return PyLong_FromLongLong(DialogId(peer));
+		}
+	}
 	return PyLong_FromLongLong(CurrentDialog.load());
 }
 
@@ -409,7 +453,11 @@ PyObject *InitNativeModule() {
 
 [[nodiscard]] bool InitInterpreter(const QString &runtime) {
 	auto config = PyConfig();
+#ifdef Q_OS_WIN
 	PyConfig_InitIsolatedConfig(&config);
+#else
+	PyConfig_InitPythonConfig(&config);
+#endif
 	const auto finish = [&](PyStatus status) {
 		if (PyStatus_Exception(status)) {
 			Instance().error = QString::fromUtf8(status.err_msg
@@ -420,6 +468,7 @@ PyObject *InitNativeModule() {
 		}
 		return true;
 	};
+#ifdef Q_OS_WIN
 	const auto home = QDir::toNativeSeparators(runtime).toStdWString();
 	if (!finish(PyConfig_SetString(&config, &config.home, home.c_str()))) {
 		return false;
@@ -439,12 +488,37 @@ PyObject *InitNativeModule() {
 			return false;
 		}
 	}
+#endif
 	config.write_bytecode = 0;
 	config.install_signal_handlers = 0;
 	if (!finish(Py_InitializeFromConfig(&config))) {
 		return false;
 	}
 	PyConfig_Clear(&config);
+
+#ifndef Q_OS_WIN
+	// Add runtime and extera directories to sys.path so modules can be imported
+	PyObject *sysPath = PySys_GetObject("path");
+	if (sysPath && PyList_Check(sysPath)) {
+		const auto extraPaths = QStringList{
+			runtime + u"extera"_q,
+			runtime,
+			runtime + u"site-packages"_q,
+			DataPath() + u"plugins"_q,
+			QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + u"/python/extera"_q,
+			QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + u"/python"_q,
+		};
+		for (auto it = extraPaths.rbegin(); it != extraPaths.rend(); ++it) {
+			const auto &path = *it;
+			const auto uPath = QDir::toNativeSeparators(path).toUtf8();
+			if (PyObject *pPath = PyUnicode_FromString(uPath.constData())) {
+				PyList_Insert(sysPath, 0, pPath);
+				Py_DECREF(pPath);
+			}
+		}
+	}
+#endif
+
 	return true;
 }
 
@@ -661,7 +735,9 @@ rpl::producer<QString> settingsChanges() {
 }
 
 void notifyListChanged() {
-	Instance().listChanges.fire({});
+	crl::on_main([] {
+		Instance().listChanges.fire({});
+	});
 }
 
 } // namespace Extera::Plugins
