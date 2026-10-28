@@ -110,17 +110,17 @@ jobs:
           }
 
           git clone -q -b v3.2.9 --depth=1 https://github.com/ada-url/ada.git
-          cmake -S ada -B ada/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS \
+          cmake -S ada -B ada/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
             -DADA_TESTING=OFF -DADA_TOOLS=OFF -DADA_INCLUDE_URL_PATTERN=OFF
           cmake --build ada/build && cmake --install ada/build
 
           fetch tdlib/td 51743dfd01dff6179e2d8f7095729caa4e2222e9 td
-          cmake -S td -B td/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS -DTD_E2E_ONLY=ON
+          cmake -S td -B td/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" -DTD_E2E_ONLY=ON
           cmake --build td/build && cmake --install td/build
 
           fetch desktop-app/tg_owt 07fb35bc33b3e79125a1beab7690e830f183f5d8 tg_owt
           git -C tg_owt submodule update -q --init --recursive --depth=1
-          cmake -S tg_owt -B tg_owt/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS \
+          cmake -S tg_owt -B tg_owt/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
             -DTG_OWT_DLOPEN_PIPEWIRE=ON
           cmake --build tg_owt/build && cmake --install tg_owt/build
 
@@ -140,11 +140,11 @@ jobs:
             --config "profile.release.lto='thin'" \
             --config "profile.release.codegen-units=1" \
             --config "profile.release.panic='unwind'"
-          mkdir -p $DEPS/lib $DEPS/include/tlottie $DEPS/include/wallet_engine
-          objcopy --strip-debug target/release/libtdesktop_rust.a $DEPS/lib/libtdesktop_rust.a
-          cp ../tlottie/include/tlottie.h $DEPS/include/tlottie/
+          mkdir -p "$DEPS/lib" "$DEPS/include/tlottie" "$DEPS/include/wallet_engine"
+          objcopy --strip-debug target/release/libtdesktop_rust.a "$DEPS/lib/libtdesktop_rust.a"
+          cp ../tlottie/include/tlottie.h "$DEPS/include/tlottie/"
           cargo run --manifest-path ../wallet-engine/bindgen/cpp/bindgen/Cargo.toml --locked -- \
-            --library --out-dir $DEPS/include/wallet_engine target/release/libtdesktop_rust.so
+            --library --out-dir "$DEPS/include/wallet_engine" target/release/libtdesktop_rust.so
 
       - name: Save dependencies
         if: steps.deps.outputs.cache-hit != 'true'
