@@ -79,10 +79,10 @@ jobs:
           pacman -Syu --noconfirm --needed \
             git cmake ninja ccache python gperf nasm yasm rustup zip github-cli \
             qt6-base qt6-svg qt6-imageformats qt6-wayland qt6-5compat \
-            kcoreaddons extra-cmake-modules glibmm-2.68 gobject-introspection \
+            kcoreaddons extra-cmake-modules glib2-devel glibmm-2.68 gobject-introspection \
             wayland-protocols plasma-wayland-protocols libxkbcommon \
             libxcomposite libxdamage libxrandr libxtst libxfixes libxrender xcb-util-keysyms \
-            ffmpeg openal openh264 libvpx dav1d opus rnnoise hunspell xxhash lz4 minizip \
+            ffmpeg openal openh264 libvpx dav1d libavif libheif opus rnnoise hunspell xxhash lz4 minizip vulkan-headers \
             openssl zlib libjpeg-turbo pipewire libpulse alsa-lib \
             boost range-v3 fmt protobuf abseil-cpp libdispatch jemalloc
 
