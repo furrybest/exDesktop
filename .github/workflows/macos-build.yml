@@ -87,6 +87,11 @@ jobs:
       - name: Package
         working-directory: tdesktop/out/Release
         run: |
+          # No Developer ID yet: sign ad-hoc so the bundle is at least
+          # consistently signed. Without it Gatekeeper reports a downloaded
+          # arm64 app as "damaged" instead of from an unidentified developer.
+          codesign --force --deep --sign - Telegram.app
+          codesign --verify --deep --strict Telegram.app
           ditto -c -k --sequesterRsrc --keepParent Telegram.app \
             "$GITHUB_WORKSPACE/exteraDesktop-macos-arm64.zip"
 
