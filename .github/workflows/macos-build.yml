@@ -9,20 +9,20 @@ jobs:
   build:
     runs-on: macos-14
     timeout-minutes: 360
+    env:
+      CLEAR_QT_BUILD_TREE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      # prepare.py hardcodes fetch_archive.py as $ROOT_DIR/tdesktop/..., where
-      # $ROOT_DIR is the checkout's parent directory, so it needs a sibling
-      # named "tdesktop" pointing back at the actual checkout.
-      - name: Link checkout as tdesktop
-        run: ln -s "$GITHUB_WORKSPACE" "$(dirname "$GITHUB_WORKSPACE")/tdesktop"
+          path: tdesktop
 
       - name: Select Xcode
         run: sudo xcode-select -s "$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -1)"
+
+      - name: Patch tgcalls CryptoHelper.h for C++ linkage
+        run: python3 tdesktop/.github/patches/fix_tgcalls_crypto.py
 
       - name: Install build dependencies
         run: brew install automake libtool cmake wget pkg-config gnu-tar ninja nasm meson
@@ -32,32 +32,37 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ${{ github.workspace }}/../Libraries
-            ${{ github.workspace }}/../ThirdParty
-          key: mac-libs-${{ hashFiles('Telegram/build/prepare/prepare.py', 'Telegram/build/prepare/mac.sh') }}
+            ${{ github.workspace }}/Libraries
+            ${{ github.workspace }}/ThirdParty
+          key: mac-libs-${{ hashFiles('tdesktop/Telegram/build/prepare/prepare.py', 'tdesktop/Telegram/build/prepare/mac.sh') }}
+          restore-keys: |
+            mac-libs-
 
       - name: Build ThirdParty libraries
-        run: ./Telegram/build/prepare/mac.sh silent arm64-only
-
-      # The Qt build tree is ~25 GB and not needed once Qt is installed into
-      # Libraries/local. prepare.py only checks that the stage folder exists
-      # and its key matches, so keep the folder and empty it. Keeps the cache
-      # under GitHub's 10 GB limit.
-      - name: Drop Qt build tree
-        if: steps.libs.outputs.cache-hit != 'true'
-        run: find "$GITHUB_WORKSPACE/../Libraries"/qt_* -mindepth 1 -delete
+        env:
+          # fetch_archive.py queries the GitHub API, unauthenticated it hits the rate limit.
+          GH_TOKEN: ${{ github.token }}
+        run: ./tdesktop/Telegram/build/prepare/mac.sh silent
 
       - name: Save ThirdParty libraries
         if: steps.libs.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
-            ${{ github.workspace }}/../Libraries
-            ${{ github.workspace }}/../ThirdParty
+            ${{ github.workspace }}/Libraries
+            ${{ github.workspace }}/ThirdParty
           key: ${{ steps.libs.outputs.cache-primary-key }}
 
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: mac-arm64
+          max-size: 2G
+
+      # Xcode generator builds the app far too slowly on the runner (6 h
+      # timeout was hit), Ninja + ccache keeps it within limits.
       - name: Configure
-        working-directory: Telegram
+        working-directory: tdesktop/Telegram
         env:
           API_ID: ${{ secrets.TDESKTOP_API_ID }}
           API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
@@ -70,15 +75,34 @@ jobs:
             echo "No API secrets, using TEST ONLY credentials"
             creds=(-D TDESKTOP_API_TEST=ON)
           fi
-          ./configure.sh "${creds[@]}" -D CMAKE_OSX_ARCHITECTURES=arm64
+          ./configure.sh "${creds[@]}" \
+            -G "Ninja Multi-Config" \
+            -D CMAKE_OSX_ARCHITECTURES=arm64 \
+            -D CMAKE_C_COMPILER_LAUNCHER=ccache \
+            -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -D CMAKE_OBJC_COMPILER_LAUNCHER=ccache \
+            -D CMAKE_OBJCXX_COMPILER_LAUNCHER=ccache \
+            -D CMAKE_CXX_FLAGS="-Xclang -fno-pch-timestamp" \
+            -D CMAKE_OBJCXX_FLAGS="-Xclang -fno-pch-timestamp"
 
+      # Most sources use the precompiled header, which ccache refuses to cache
+      # unless the PCH has no timestamp and these sloppiness bits are set.
+      # Three jobs, not ninja's default five: the 3-core/7 GB runner swaps and
+      # single files took 10-20 min.
       - name: Build
-        working-directory: out
-        run: cmake --build . --config Release --target Telegram
+        working-directory: tdesktop/out
+        env:
+          CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+        run: cmake --build . --config Release --target Telegram --parallel 3
 
       - name: Package
-        working-directory: out/Release
+        working-directory: tdesktop/out/Release
         run: |
+          # No Developer ID yet: sign ad-hoc so the bundle is at least
+          # consistently signed. Without it Gatekeeper reports a downloaded
+          # arm64 app as "damaged" instead of from an unidentified developer.
+          codesign --force --deep --sign - Telegram.app
+          codesign --verify --deep --strict Telegram.app
           ditto -c -k --sequesterRsrc --keepParent Telegram.app \
             "$GITHUB_WORKSPACE/exteraDesktop-macos-arm64.zip"
 
