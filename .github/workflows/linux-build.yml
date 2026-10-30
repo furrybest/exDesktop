@@ -1,4 +1,4 @@
-name: Linux Build (Portable glibc 2.17)
+name: Linux Build (Arch, Portable glibc 2.17)
 
 on:
   push:
@@ -9,86 +9,87 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    container: archlinux:base-devel
+    defaults:
+      run:
+        shell: bash
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Install System Packages
+      run: |
+        pacman -Syu --noconfirm --needed \
+          git cmake ninja ccache python gperf nasm yasm rustup curl \
+          qt6-base qt6-svg qt6-imageformats qt6-wayland qt6-5compat \
+          kcoreaddons extra-cmake-modules glib2-devel glibmm-2.68 gobject-introspection \
+          wayland-protocols plasma-wayland-protocols libxkbcommon \
+          libxcomposite libxdamage libxrandr libxtst libxfixes libxrender xcb-util-keysyms \
+          ffmpeg openal openh264 libvpx dav1d libavif libheif opus rnnoise hunspell xxhash lz4 minizip vulkan-headers \
+          openssl zlib libjpeg-turbo pipewire libpulse alsa-lib \
+          boost range-v3 fmt protobuf abseil-cpp libdispatch jemalloc
+
+    - name: Checkout
+      uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # 1. Ставим зависимости для сборки (как в официальном Docker)
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential cmake ninja-build pkg-config python3-dev \
-          libqt6svg6-dev qt6-base-dev liblzma-dev libopenal-dev \
-          libxxhash-dev libssl-dev libboost-dev libavcodec-dev libavformat-dev \
-          libavutil-dev libavfilter-dev libswresample-dev libswscale-dev \
-          libjpeg-dev libprotobuf-dev libglib2.0-dev libgtk-3-dev \
-          libpango1.0-dev libfontconfig1-dev libfreetype6-dev \
-          libxkbcommon-dev libwayland-dev libvulkan-dev \
-          libxcb-xinerama0-dev libxcb-cursor-dev libxcb-icccm4-dev libxcb-image0-dev \
-          libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev libxcb-shape0-dev \
-          libxcb-xfixes0-dev libxcb-xkb-dev libxcb-sync-dev libxcb-xv0-dev \
-          gperf autoconf automake libtool curl yasm \
-          libvpx-dev libopus-dev libfmt-dev libavif-dev libjxl-dev libhunspell-dev \
-          protobuf-compiler libopenh264-dev libpipewire-0.3-dev libgbm-dev libdrm-dev
-
-    # 2. Скачиваем портативный тулчейн (GCC 16 + glibc 2.17)
+    # Скачиваем портативный тулчейн (GCC + glibc 2.17)
     - name: Download Portable GCC Toolchain
       run: |
-        curl -sSL https://github.com/prepkg/gcc-toolchain/releases/latest/download/gcc-x86_64-linux-gnu.tar.gz | sudo tar xz -C /opt
+        curl -sSL https://github.com/prepkg/gcc-toolchain/releases/latest/download/gcc-x86_64-linux-gnu.tar.gz | tar xz -C /opt
         echo "/opt/x86_64-linux-gnu/bin" >> $GITHUB_PATH
         echo "CC=/opt/x86_64-linux-gnu/bin/x86_64-linux-gnu-gcc" >> $GITHUB_ENV
         echo "CXX=/opt/x86_64-linux-gnu/bin/x86_64-linux-gnu-g++" >> $GITHUB_ENV
 
-    # 3. Скачиваем и собираем зависимости (упрощенно, как в твоем прошлом скрипте)
-    # Здесь мы используем уже готовые скрипты из репозитория exDesktop
-    - name: Setup Python & Poetry
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-    - run: |
-        curl -sSL https://install.python-poetry.org | python3 -
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-    # 4. Конфигурация с портативным компилятором
     - name: Configure
+      env:
+        API_ID: ${{ secrets.TDESKTOP_API_ID }}
+        API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
       run: |
-        # Используем официальный скрипт конфигурации из репозитория exDesktop
-        # (он сам подтянет нужные флаги)
-        cd Telegram
-        python3 configure.py linux \
+        if [ -n "$API_ID" ]; then
+          creds=(-D TDESKTOP_API_ID="$API_ID" -D TDESKTOP_API_HASH="$API_HASH")
+        else
+          echo "No API secrets, using TEST ONLY credentials"
+          creds=(-D TDESKTOP_API_TEST=ON)
+        fi
+        cmake -B out -G Ninja "${creds[@]}" \
+          -D CMAKE_BUILD_TYPE=Release \
           -D CMAKE_C_COMPILER="$CC" \
           -D CMAKE_CXX_COMPILER="$CXX" \
           -D CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
-          -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID }} \
-          -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH }}
+          -D DESKTOP_APP_USE_PACKAGED=OFF
 
-    # 5. Сборка
-    - name: Build
-      run: |
-        cd Telegram
-        cmake --build out --config Release --target Telegram -j $(nproc)
+    - name: Build Telegram binary
+      run: cmake --build out --target Telegram
 
-    # 6. Упаковка (только бинарник и python, библиотеки НЕ копируем)
-    - name: Package
+    - name: Package Linux release
       run: |
         VERSION=$(grep -oP 'constexpr auto AppVersionStr = "\K[^"]+' Telegram/SourceFiles/core/version.h || echo "7.3.3.4")
-        mkdir -p release/python/extera
-        # Копируем бинарник
-        cp Telegram/out/Release/Telegram release/ || cp Telegram/out/bin/Telegram release/
-        # Копируем Python рантайм
-        cp -r Telegram/SourceFiles/extera/python/* release/python/extera/
-        # Создаем скрипт запуска (на всякий случай)
-        echo '#!/bin/bash' > release/run.sh
-        echo 'exec "$(dirname "$0")/Telegram" "$@"' >> release/run.sh
-        chmod +x release/run.sh release/Telegram
-        # Пакуем
-        tar -cJf exDesktop-linux-x64-portable.tar.xz -C release .
+        RELEASE_DIR="exDesktop-${VERSION}-linux-x64"
+        mkdir -p "${RELEASE_DIR}/python/extera"
 
-    - name: Upload Artifact
+        if [ -f out/Release/root/Telegram ]; then
+          cp out/Release/root/Telegram "${RELEASE_DIR}/"
+        elif [ -f out/bin/Telegram ]; then
+          cp out/bin/Telegram "${RELEASE_DIR}/"
+        else
+          echo "Error: Telegram binary not found" >&2
+          exit 1
+        fi
+
+        cp -r Telegram/SourceFiles/extera/python/* "${RELEASE_DIR}/python/extera/"
+
+        cat << 'EOF' > "${RELEASE_DIR}/run.sh"
+        #!/bin/bash
+        DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+        exec "$DIR/Telegram" "$@"
+        EOF
+        chmod +x "${RELEASE_DIR}/run.sh"
+        chmod +x "${RELEASE_DIR}/Telegram"
+
+        tar -cJf "exDesktop-linux-x64.${VERSION}.tar.xz" "${RELEASE_DIR}"
+
+    - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: exDesktop-portable
-        path: exDesktop-linux-x64-portable.tar.xz
+        name: exDesktop-linux-x64
+        path: exDesktop-linux-x64.*.tar.xz
