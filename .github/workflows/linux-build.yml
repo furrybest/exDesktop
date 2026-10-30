@@ -1,4 +1,4 @@
-name: Linux Build (Arch, Portable glibc 2.17)
+name: Linux Build
 
 on:
   push:
@@ -7,15 +7,15 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    runs-on: ubuntu-latest
     container: archlinux:base-devel
-    defaults:
-      run:
-        shell: bash
-
     steps:
-    - name: Install System Packages
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Packages
       run: |
         pacman -Syu --noconfirm --needed \
           git cmake ninja ccache python gperf nasm yasm rustup curl \
@@ -27,24 +27,18 @@ jobs:
           openssl zlib libjpeg-turbo pipewire libpulse alsa-lib \
           boost range-v3 fmt protobuf abseil-cpp libdispatch jemalloc
 
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Download Portable GCC Toolchain
+    - name: Download Portable Toolchain
       run: |
         curl -sSL https://github.com/prepkg/gcc-toolchain/releases/latest/download/gcc-x86_64-linux-gnu.tar.gz | tar xz -C /opt
         echo "/opt/x86_64-linux-gnu/bin" >> $GITHUB_PATH
         echo "CC=/opt/x86_64-linux-gnu/bin/x86_64-linux-gnu-gcc" >> $GITHUB_ENV
         echo "CXX=/opt/x86_64-linux-gnu/bin/x86_64-linux-gnu-g++" >> $GITHUB_ENV
 
-    # СБОРКА ЗАВИСИМОСТЕЙ (ada, tdlib)
     - name: Build Dependencies
       run: |
         set -e
         mkdir -p /tmp/deps && cd /tmp/deps
-        export DEPS=/opt/deps
+        export DEPS=/usr/local
         mkdir -p "$DEPS"
 
         # Ada
@@ -69,49 +63,33 @@ jobs:
         if [ -n "$API_ID" ]; then
           creds=(-D TDESKTOP_API_ID="$API_ID" -D TDESKTOP_API_HASH="$API_HASH")
         else
-          echo "No API secrets, using TEST ONLY credentials"
           creds=(-D TDESKTOP_API_TEST=ON)
         fi
         cmake -B out -G Ninja "${creds[@]}" \
           -D CMAKE_BUILD_TYPE=Release \
           -D CMAKE_C_COMPILER="$CC" \
           -D CMAKE_CXX_COMPILER="$CXX" \
-          -D CMAKE_PREFIX_PATH="/opt/deps" \
           -D CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
           -D DESKTOP_APP_USE_PACKAGED=OFF
 
-    - name: Build Telegram binary
+    - name: Build
       run: cmake --build out --target Telegram
 
-    - name: Package Linux release
+    - name: Package
       run: |
         VERSION=$(grep -oP 'constexpr auto AppVersionStr = "\K[^"]+' Telegram/SourceFiles/core/version.h || echo "7.3.3.4")
-        RELEASE_DIR="exDesktop-${VERSION}-linux-x64"
-        mkdir -p "${RELEASE_DIR}/python/extera"
-
-        if [ -f out/Release/root/Telegram ]; then
-          cp out/Release/root/Telegram "${RELEASE_DIR}/"
-        elif [ -f out/bin/Telegram ]; then
-          cp out/bin/Telegram "${RELEASE_DIR}/"
-        else
-          echo "Error: Telegram binary not found" >&2
-          exit 1
-        fi
-
-        cp -r Telegram/SourceFiles/extera/python/* "${RELEASE_DIR}/python/extera/"
-
-        cat << 'EOF' > "${RELEASE_DIR}/run.sh"
+        mkdir -p release/python/extera
+        cp out/bin/Telegram release/
+        cp -r Telegram/SourceFiles/extera/python/* release/python/extera/
+        cat << 'EOF' > release/run.sh
         #!/bin/bash
-        DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-        exec "$DIR/Telegram" "$@"
+        exec "$(dirname "$0")/Telegram" "$@"
         EOF
-        chmod +x "${RELEASE_DIR}/run.sh"
-        chmod +x "${RELEASE_DIR}/Telegram"
+        chmod +x release/run.sh release/Telegram
+        tar -cJf "exDesktop-linux-x64.${VERSION}.tar.xz" -C release .
 
-        tar -cJf "exDesktop-linux-x64.${VERSION}.tar.xz" "${RELEASE_DIR}"
-
-    - name: Upload build artifact
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: exDesktop-linux-x64
+        name: exDesktop-Linux-Build
         path: exDesktop-linux-x64.*.tar.xz
