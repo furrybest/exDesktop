@@ -65,6 +65,7 @@ run_configure() {
     cmake -B "${BUILD_DIR}" -G Ninja \
         -DCMAKE_BUILD_TYPE="${CONFIG}" \
         "${API_ARGS[@]}" \
+        -DDESKTOP_APP_USE_PACKAGED=OFF \
         -DDESKTOP_APP_DISABLE_X11_INTEGRATION=OFF \
         -DDESKTOP_APP_DISABLE_WAYLAND_INTEGRATION=OFF \
         "${@:2}"
@@ -113,13 +114,16 @@ run_docker() {
     echo "==> Running build in container..."
     local DOCKER_TTY=""
     [ -t 0 ] && DOCKER_TTY="-it"
+    
+    # ЗДЕСЬ ДОБАВЛЕН ФЛАГ ДЛЯ СТАТИЧЕСКОЙ СБОРКИ
     ${DOCKER_CLI} run --rm ${DOCKER_TTY} \
         -u "$(id -u):$(id -g)" \
         -v "$PWD:/usr/src/tdesktop" \
         -e CONFIG="${CONFIG}" \
         "${IMAGE_TAG}" \
         /usr/src/tdesktop/Telegram/build/docker/centos_env/build.sh \
-        "${API_ARGS[@]}"
+        "${API_ARGS[@]}" \
+        -DDESKTOP_APP_USE_PACKAGED=OFF
 
     echo "==> Success! Binary output: out/Release/root/Telegram"
 }
