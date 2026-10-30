@@ -10,21 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
-    # 1. СНАЧАЛА СТАВИМ GIT (без него checkout не скачает сабмодули)
     - name: Install git
       run: pacman -Syu --noconfirm --needed git
 
-    # 2. Теперь чекаутим репозиторий
     - name: Checkout
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # 3. Ставим остальные пакеты для сборки
     - name: Install Packages
       run: |
         pacman -Syu --noconfirm --needed \
-          git cmake ninja ccache python gperf nasm yasm rustup curl \
+          cmake ninja ccache python gperf nasm yasm rustup curl \
           qt6-base qt6-svg qt6-imageformats qt6-wayland qt6-5compat \
           kcoreaddons extra-cmake-modules glib2-devel glibmm-2.68 gobject-introspection \
           wayland-protocols plasma-wayland-protocols libxkbcommon \
@@ -33,7 +30,6 @@ jobs:
           openssl zlib libjpeg-turbo pipewire libpulse alsa-lib \
           boost range-v3 fmt protobuf abseil-cpp libdispatch jemalloc
 
-    # 4. Скачиваем портативный тулчейн (GCC + glibc 2.17)
     - name: Download Portable Toolchain
       run: |
         curl -sSL https://github.com/prepkg/gcc-toolchain/releases/latest/download/gcc-x86_64-linux-gnu.tar.gz | tar xz -C /opt
@@ -41,20 +37,17 @@ jobs:
         echo "CC=/opt/x86_64-linux-gnu/bin/x86_64-linux-gnu-gcc" >> $GITHUB_ENV
         echo "CXX=/opt/x86_64-linux-gnu/bin/x86_64-linux-gnu-g++" >> $GITHUB_ENV
 
-    # 5. Собираем зависимости (ada, tdlib)
     - name: Build Dependencies
       run: |
         set -e
         mkdir -p /tmp/deps && cd /tmp/deps
         export DEPS=/usr/local
 
-        # Ada
         git clone -q -b v3.2.9 --depth=1 https://github.com/ada-url/ada.git
         cmake -S ada -B ada/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
           -DADA_TESTING=OFF -DADA_TOOLS=OFF -DADA_INCLUDE_URL_PATTERN=OFF
         cmake --build ada/build && cmake --install ada/build
 
-        # tdlib
         git clone -q https://github.com/tdlib/td.git td
         cd td
         git fetch --depth=1 origin 51743dfd01dff6179e2d8f7095729caa4e2222e9
@@ -62,7 +55,6 @@ jobs:
         cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" -DTD_E2E_ONLY=ON
         cmake --build build && cmake --install build
 
-    # 6. Конфигурация с портативным компилятором
     - name: Configure
       env:
         API_ID: ${{ secrets.TDESKTOP_API_ID }}
@@ -80,38 +72,27 @@ jobs:
           -D CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
           -D DESKTOP_APP_USE_PACKAGED=OFF
 
-    # 7. Сборка
-    - name: Build Telegram binary
+    - name: Build
       run: cmake --build out --target Telegram
 
-    # 8. Упаковка
-    - name: Package Linux release
+    - name: Package
       run: |
         VERSION=$(grep -oP 'constexpr auto AppVersionStr = "\K[^"]+' Telegram/SourceFiles/core/version.h || echo "7.3.3.4")
         RELEASE_DIR="exDesktop-${VERSION}-linux-x64"
         mkdir -p "${RELEASE_DIR}/python/extera"
-
+        
         if [ -f out/bin/Telegram ]; then
           cp out/bin/Telegram "${RELEASE_DIR}/"
-        else
-          echo "Error: Telegram binary not found" >&2
-          exit 1
+        elif [ -f out/Release/root/Telegram ]; then
+          cp out/Release/root/Telegram "${RELEASE_DIR}/"
         fi
-
+        
         cp -r Telegram/SourceFiles/extera/python/* "${RELEASE_DIR}/python/extera/"
-
-        cat << 'EOF' > "${RELEASE_DIR}/run.sh"
-        #!/bin/bash
-        exec "$(dirname "$0")/Telegram" "$@"
-        EOF
-        chmod +x "${RELEASE_DIR}/run.sh"
         chmod +x "${RELEASE_DIR}/Telegram"
-
         tar -cJf "exDesktop-linux-x64.${VERSION}.tar.xz" "${RELEASE_DIR}"
 
-    # 9. Загрузка артефакта
-    - name: Upload build artifact
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: exDesktop-linux-x64
+        name: exDesktop-Linux-Build
         path: exDesktop-linux-x64.*.tar.xz
