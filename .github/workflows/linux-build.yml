@@ -21,7 +21,7 @@ jobs:
     - name: Install Packages
       run: |
         pacman -Syu --noconfirm --needed \
-          cmake ninja ccache python gperf nasm yasm rustup curl \
+          cmake ninja ccache python gperf nasm yasm rustup curl pkgconf \
           qt6-base qt6-svg qt6-imageformats qt6-wayland qt6-5compat \
           kcoreaddons extra-cmake-modules glib2-devel glibmm-2.68 gobject-introspection \
           wayland-protocols plasma-wayland-protocols libxkbcommon \
@@ -43,16 +43,26 @@ jobs:
         mkdir -p /tmp/deps && cd /tmp/deps
         export DEPS=/usr/local
 
+        # Ada
         git clone -q -b v3.2.9 --depth=1 https://github.com/ada-url/ada.git
         cmake -S ada -B ada/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
           -DADA_TESTING=OFF -DADA_TOOLS=OFF -DADA_INCLUDE_URL_PATTERN=OFF
         cmake --build ada/build && cmake --install ada/build
 
+        # tdlib
         git clone -q https://github.com/tdlib/td.git td
         cd td
         git fetch --depth=1 origin 51743dfd01dff6179e2d8f7095729caa4e2222e9
         git reset --hard FETCH_HEAD
-        cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" -DTD_E2E_ONLY=ON
+        
+        # Указываем CMake, где искать OpenSSL (добавлен pkgconf в пакеты)
+        cmake -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="$DEPS" \
+          -DOPENSSL_ROOT_DIR=/usr \
+          -DOPENSSL_INCLUDE_DIR=/usr/include \
+          -DTD_E2E_ONLY=ON
+        
         cmake --build build && cmake --install build
 
     - name: Configure
