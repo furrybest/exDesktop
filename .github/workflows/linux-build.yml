@@ -32,13 +32,34 @@ jobs:
       with:
         submodules: recursive
 
-    # Скачиваем портативный тулчейн (GCC + glibc 2.17)
     - name: Download Portable GCC Toolchain
       run: |
         curl -sSL https://github.com/prepkg/gcc-toolchain/releases/latest/download/gcc-x86_64-linux-gnu.tar.gz | tar xz -C /opt
         echo "/opt/x86_64-linux-gnu/bin" >> $GITHUB_PATH
         echo "CC=/opt/x86_64-linux-gnu/bin/x86_64-linux-gnu-gcc" >> $GITHUB_ENV
         echo "CXX=/opt/x86_64-linux-gnu/bin/x86_64-linux-gnu-g++" >> $GITHUB_ENV
+
+    # СБОРКА ЗАВИСИМОСТЕЙ (ada, tdlib)
+    - name: Build Dependencies
+      run: |
+        set -e
+        mkdir -p /tmp/deps && cd /tmp/deps
+        export DEPS=/opt/deps
+        mkdir -p "$DEPS"
+
+        # Ada
+        git clone -q -b v3.2.9 --depth=1 https://github.com/ada-url/ada.git
+        cmake -S ada -B ada/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
+          -DADA_TESTING=OFF -DADA_TOOLS=OFF -DADA_INCLUDE_URL_PATTERN=OFF
+        cmake --build ada/build && cmake --install ada/build
+
+        # tdlib
+        git clone -q https://github.com/tdlib/td.git td
+        cd td
+        git fetch --depth=1 origin 51743dfd01dff6179e2d8f7095729caa4e2222e9
+        git reset --hard FETCH_HEAD
+        cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" -DTD_E2E_ONLY=ON
+        cmake --build build && cmake --install build
 
     - name: Configure
       env:
@@ -55,6 +76,7 @@ jobs:
           -D CMAKE_BUILD_TYPE=Release \
           -D CMAKE_C_COMPILER="$CC" \
           -D CMAKE_CXX_COMPILER="$CXX" \
+          -D CMAKE_PREFIX_PATH="/opt/deps" \
           -D CMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
           -D DESKTOP_APP_USE_PACKAGED=OFF
 
